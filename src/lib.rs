@@ -38,29 +38,36 @@ impl SsmSerial {
         self.port.write(&cmd_buf)?;
 
         let mut buffer = [0; 3];
-        for _retry in 0..1000 {
-            match self.port.read(&mut buffer) {
-                Ok(n) => {
-                    if n != 3 {
-                        // TODO: Check if it'll try to fill three bytes or we get partial responses
-                        return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "Failed to read three bytes in time"));
-                    }
-
-                    let a = (buffer[0] as u16) << 8 | buffer[1] as u16;
-                    if a != addr {
-                        if a as u32 == self.last_addr {
-                            // Stale response, read again
-                            continue;
-                        } else {
-                            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Response address does not match requested address"));
+        'retries: for _retry in 0..1000 {
+            for i in 0..3 {
+                let mut tbuf = [0; 1];
+                match self.port.read(&mut tbuf) {
+                    Ok(n) => {
+                        if n != 1 {
+                            unreachable!();
                         }
+
+                        buffer[i] = tbuf[0];
+
+                        if i == 2 {
+                            let a = (buffer[0] as u16) << 8 | buffer[1] as u16;
+                            if a != addr {
+                                if a as u32 == self.last_addr {
+                                    // Stale response, read again
+                                    continue 'retries;
+                                } else {
+                                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Response address does not match requested address"));
+                                }
+                            }
+
+                            self.last_addr = addr as u32;
+                            return Ok(buffer[2]);
+                        }
+                    },
+                    Err(e) => {
+                        return Err(e);
                     }
 
-                    self.last_addr = addr as u32;
-                    return Ok(buffer[2]);
-                },
-                Err(e) => {
-                    return Err(e);
                 }
             }
         }
